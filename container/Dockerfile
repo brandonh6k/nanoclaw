@@ -1,7 +1,7 @@
 # NanoClaw Agent Container
 # Runs Claude Agent SDK in isolated Linux VM with browser automation
 
-FROM node:24-slim
+FROM node:22-slim
 
 # Forward sandbox proxy settings (optional — only set when building inside a
 # Docker Sandbox that MITMs outbound traffic).
