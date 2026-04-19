@@ -13,7 +13,24 @@ CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 echo "Building NanoClaw agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 
-${CONTAINER_RUNTIME} build -t "${IMAGE_NAME}:${TAG}" .
+# Forward sandbox proxy settings so apt/npm inside the build can reach the
+# internet when running inside a Docker Sandbox (MITM proxy at
+# host.docker.internal:3128). Harmless outside a sandbox.
+PROXY_ARGS=""
+for var in http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+  if [ -n "${!var:-}" ]; then
+    PROXY_ARGS="$PROXY_ARGS --build-arg $var=${!var}"
+  fi
+done
+
+# If a proxy is active, disable npm strict-ssl for the build (MITM cert won't
+# be in the base image trust store). Runtime trust is re-enabled inside the
+# image.
+if [ -n "${http_proxy:-${HTTP_PROXY:-}}" ]; then
+  PROXY_ARGS="$PROXY_ARGS --build-arg npm_config_strict_ssl=false"
+fi
+
+${CONTAINER_RUNTIME} build $PROXY_ARGS -t "${IMAGE_NAME}:${TAG}" .
 
 echo ""
 echo "Build complete!"

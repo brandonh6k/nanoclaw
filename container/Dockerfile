@@ -3,7 +3,16 @@
 
 FROM node:24-slim
 
-# Install system dependencies for Chromium
+# Forward sandbox proxy settings (optional — only set when building inside a
+# Docker Sandbox that MITMs outbound traffic).
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+# Install system dependencies for Chromium.
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -30,8 +39,17 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
+# npm needs strict-ssl disabled when building inside a Docker Sandbox that
+# MITMs TLS — the sandbox CA isn't in the base image's trust store. Harmless
+# outside a sandbox because the proxy isn't there to intercept.
+ARG npm_config_strict_ssl=true
+RUN npm config set strict-ssl ${npm_config_strict_ssl}
+
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
+
+# Re-enable strict-ssl for runtime (harmless if never disabled).
+RUN npm config set strict-ssl true
 
 # Create app directory
 WORKDIR /app
@@ -39,7 +57,7 @@ WORKDIR /app
 # Copy package files first for better caching
 COPY agent-runner/package*.json ./
 
-# Install dependencies
+# Install dependencies (strict-ssl already handled above).
 RUN npm install
 
 # Copy source code
