@@ -25,6 +25,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
+import { readEnvFile as readEnvFromDotEnv } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -241,19 +242,59 @@ async function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // OneCLI gateway handles credential injection — containers never see real secrets.
-  // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
-  const onecliApplied = await onecli.applyContainerConfig(args, {
-    addHostMapping: false, // Nanoclaw already handles host gateway
-    agent: agentIdentifier,
-  });
-  if (onecliApplied) {
-    logger.info({ containerName }, 'OneCLI gateway config applied');
+  // When running inside a Docker Sandbox, the sandbox forces all egress
+  // through its own MITM proxy at host.docker.internal:3128. OneCLI's Rust
+  // gateway connects to api.anthropic.com directly (doesn't honor
+  // HTTPS_PROXY) so it gets blocked — skip OneCLI entirely and forward the
+  // sandbox proxy + the user's ANTHROPIC_API_KEY straight to the agent.
+  const sandboxProxy =
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy;
+  const sandboxCa = process.env.SSL_CERT_FILE;
+  const inSandbox = !!sandboxProxy && sandboxProxy.includes('host.docker.internal');
+
+  let onecliApplied = false;
+  if (inSandbox) {
+    const envFile = readEnvFromDotEnv(['ANTHROPIC_API_KEY']);
+    const anthropicKey = envFile.ANTHROPIC_API_KEY;
+    if (anthropicKey) {
+      args.push('-e', `ANTHROPIC_API_KEY=${anthropicKey}`);
+    }
+    args.push('-e', `HTTPS_PROXY=${sandboxProxy}`);
+    args.push('-e', `HTTP_PROXY=${sandboxProxy}`);
+    args.push('-e', `https_proxy=${sandboxProxy}`);
+    args.push('-e', `http_proxy=${sandboxProxy}`);
+    if (sandboxCa && fs.existsSync(sandboxCa)) {
+      const certDir = path.join(DATA_DIR, 'ca-cert');
+      fs.mkdirSync(certDir, { recursive: true });
+      const certDst = path.join(certDir, 'sandbox-ca.crt');
+      if (!fs.existsSync(certDst) || fs.statSync(sandboxCa).mtimeMs > fs.statSync(certDst).mtimeMs) {
+        fs.copyFileSync(sandboxCa, certDst);
+      }
+      args.push('-v', `${certDst}:/workspace/ca-cert/proxy-ca.crt:ro`);
+      args.push('-e', 'NODE_EXTRA_CA_CERTS=/workspace/ca-cert/proxy-ca.crt');
+      args.push('-e', 'SSL_CERT_FILE=/workspace/ca-cert/proxy-ca.crt');
+      args.push('-e', 'REQUESTS_CA_BUNDLE=/workspace/ca-cert/proxy-ca.crt');
+      args.push('-e', 'GIT_SSL_CAINFO=/workspace/ca-cert/proxy-ca.crt');
+    }
+    logger.info({ containerName }, 'Docker Sandbox mode: direct Anthropic + sandbox proxy');
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
+    // OneCLI gateway handles credential injection — containers never see real secrets.
+    // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
+    onecliApplied = await onecli.applyContainerConfig(args, {
+      addHostMapping: false, // Nanoclaw already handles host gateway
+      agent: agentIdentifier,
+    });
+    if (onecliApplied) {
+      logger.info({ containerName }, 'OneCLI gateway config applied');
+    } else {
+      logger.warn(
+        { containerName },
+        'OneCLI gateway not reachable — container will have no credentials',
+      );
+    }
   }
 
   // Runtime-specific args for host gateway resolution
