@@ -11,6 +11,13 @@ set -uo pipefail
 cd /Users/brandon.hunt/nanoclaw-sandbox
 mkdir -p logs
 
+# Docker Sandbox's DinD daemon only bind-mounts paths under the workspace.
+# The OneCLI SDK writes its proxy CA certs to os.tmpdir() (default /tmp) and
+# bind-mounts them into agent containers — which DinD rejects ("path not
+# shared"). Override TMPDIR so the SDK writes into the workspace.
+export TMPDIR="/Users/brandon.hunt/nanoclaw-sandbox/data/tmp"
+mkdir -p "$TMPDIR"
+
 log() { echo "[$(date -Iseconds)] $*" >> logs/supervisor.log; }
 
 # 1. Ensure OneCLI is up with an Anthropic secret.
