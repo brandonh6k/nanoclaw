@@ -1,5 +1,6 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { updateChatName } from '../db.js';
@@ -55,11 +56,27 @@ export class SlackChannel implements Channel {
       );
     }
 
+    // When running inside a Docker Sandbox, all outbound traffic must route
+    // through the MITM proxy (HTTPS_PROXY env var). Bolt's internal WebClient
+    // and SocketModeClient don't auto-honor HTTPS_PROXY, so wire an explicit
+    // agent. Outside a sandbox, agent is undefined and behavior is unchanged.
+    const proxyUrl =
+      process.env.HTTPS_PROXY ||
+      process.env.https_proxy ||
+      process.env.HTTP_PROXY ||
+      process.env.http_proxy;
+    const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+
     this.app = new App({
       token: botToken,
       appToken,
       socketMode: true,
       logLevel: LogLevel.ERROR,
+      // `agent` is threaded through to both the WebClient and the internal
+      // SocketModeReceiver/Client, so one setting covers both HTTPS API calls
+      // and the Socket Mode WebSocket.
+      agent: proxyAgent,
+      clientOptions: proxyAgent ? { agent: proxyAgent } : undefined,
     });
 
     this.setupEventHandlers();
