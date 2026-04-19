@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    NanoClaw LaunchAgent for the Docker Sandbox deployment.
+
+    Template variables (substitute at install time):
+      {{PROJECT_ROOT}}  – host path of the workspace (e.g. /Users/you/nanoclaw-sandbox)
+      {{SANDBOX_NAME}}  – Docker Sandbox name (e.g. shell-nanoclaw-sandbox)
+      {{DOCKER_BIN}}    – absolute path to `docker` (e.g. /usr/local/bin/docker)
+
+    Install:
+      sed -e "s|{{PROJECT_ROOT}}|$PWD|g" \
+          -e "s|{{SANDBOX_NAME}}|shell-nanoclaw-sandbox|g" \
+          -e "s|{{DOCKER_BIN}}|$(which docker)|g" \
+          launchd/com.nanoclaw.sandbox.plist > ~/Library/LaunchAgents/com.nanoclaw.sandbox.plist
+      launchctl load ~/Library/LaunchAgents/com.nanoclaw.sandbox.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanoclaw.sandbox</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>{{DOCKER_BIN}} sandbox exec {{SANDBOX_NAME}} {{PROJECT_ROOT}}/scripts/start-nanoclaw.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_ROOT}}/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_ROOT}}/logs/launchd.err.log</string>
+</dict>
+</plist>
