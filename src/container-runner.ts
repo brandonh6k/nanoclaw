@@ -253,10 +253,18 @@ async function buildContainerArgs(
     process.env.HTTP_PROXY ||
     process.env.http_proxy;
   const sandboxCa = process.env.SSL_CERT_FILE;
-  const inSandbox = !!sandboxProxy && sandboxProxy.includes('host.docker.internal');
+  const inSandbox =
+    !!sandboxProxy && sandboxProxy.includes('host.docker.internal');
 
   let onecliApplied = false;
   if (inSandbox) {
+    // --network host: share the sandbox VM's network namespace. Needed
+    // because inside nested Docker (DinD), `host.docker.internal` resolves
+    // to the sandbox VM — not the macOS host where the MITM proxy lives.
+    // Host networking gives us the sandbox VM's DNS so host.docker.internal
+    // reaches the real proxy on 3128.
+    args.push('--network', 'host');
+
     const envFile = readEnvFromDotEnv(['ANTHROPIC_API_KEY']);
     const anthropicKey = envFile.ANTHROPIC_API_KEY;
     if (anthropicKey) {
@@ -270,7 +278,10 @@ async function buildContainerArgs(
       const certDir = path.join(DATA_DIR, 'ca-cert');
       fs.mkdirSync(certDir, { recursive: true });
       const certDst = path.join(certDir, 'sandbox-ca.crt');
-      if (!fs.existsSync(certDst) || fs.statSync(sandboxCa).mtimeMs > fs.statSync(certDst).mtimeMs) {
+      if (
+        !fs.existsSync(certDst) ||
+        fs.statSync(sandboxCa).mtimeMs > fs.statSync(certDst).mtimeMs
+      ) {
         fs.copyFileSync(sandboxCa, certDst);
       }
       args.push('-v', `${certDst}:/workspace/ca-cert/proxy-ca.crt:ro`);
@@ -279,7 +290,10 @@ async function buildContainerArgs(
       args.push('-e', 'REQUESTS_CA_BUNDLE=/workspace/ca-cert/proxy-ca.crt');
       args.push('-e', 'GIT_SSL_CAINFO=/workspace/ca-cert/proxy-ca.crt');
     }
-    logger.info({ containerName }, 'Docker Sandbox mode: direct Anthropic + sandbox proxy');
+    logger.info(
+      { containerName },
+      'Docker Sandbox mode: direct Anthropic + sandbox proxy',
+    );
   } else {
     // OneCLI gateway handles credential injection — containers never see real secrets.
     // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
@@ -297,8 +311,11 @@ async function buildContainerArgs(
     }
   }
 
-  // Runtime-specific args for host gateway resolution
-  args.push(...hostGatewayArgs());
+  // Runtime-specific args for host gateway resolution.
+  // Skip when --network host was already set (docker rejects combining them).
+  if (!inSandbox) {
+    args.push(...hostGatewayArgs());
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
