@@ -80,10 +80,18 @@ function buildVolumeMounts(
 
     // Shadow .env so the agent cannot read secrets from the mounted project root.
     // Credentials are injected by the OneCLI gateway, never exposed to containers.
+    // Use an empty workspace file (not /dev/null) so this works inside Docker
+    // Sandbox — the DinD daemon rejects bind-mounts of paths outside the shared
+    // workspace with "path not shared".
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
+      const emptyEnvPath = path.join(DATA_DIR, 'empty-env');
+      if (!fs.existsSync(emptyEnvPath)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(emptyEnvPath, '');
+      }
       mounts.push({
-        hostPath: '/dev/null',
+        hostPath: emptyEnvPath,
         containerPath: '/workspace/project/.env',
         readonly: true,
       });
